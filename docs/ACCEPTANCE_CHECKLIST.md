@@ -59,7 +59,9 @@ docker compose up --build -d    # full local stack
 - [x] **Accessible forms** - labels, `aria-invalid`, `aria-describedby`,
       keyboard-operable star rating, status conveyed by text as well as colour.
 - [x] **SPA routing** - deep links such as `/courses/10` and `/admin/reviews`
-      render the app (CloudFront 403/404 → `/index.html`).
+      render the app (a CloudFront Function on the S3 behavior rewrites
+      extension-less paths to `/index.html`; `/api/*` status codes such as
+      404 pass through unchanged).
 
 ## Engineering
 

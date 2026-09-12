@@ -31,6 +31,33 @@ data "aws_cloudfront_origin_request_policy" "all_viewer_except_host" {
   name = "Managed-AllViewerExceptHostHeader"
 }
 
+# SPA routing: S3 has no object for /courses/10 or /admin/reviews, so rewrite
+# any path whose last segment has no file extension to /index.html and let
+# React Router resolve it.
+#
+# This runs on the S3 behavior only. A distribution-wide custom_error_response
+# would also rewrite the API's own 404/403 responses into index.html with a
+# 200, breaking the API contract for clients.
+#
+# CloudFront Functions do not support tags; Terraform still destroys this one
+# together with the distribution.
+resource "aws_cloudfront_function" "spa_rewrite" {
+  name    = "${local.name_prefix}-spa-rewrite"
+  runtime = "cloudfront-js-2.0"
+  comment = "Serve index.html for client-side routes"
+  publish = true
+  code    = <<-EOT
+    function handler(event) {
+      var request = event.request;
+      var lastSegment = request.uri.substring(request.uri.lastIndexOf('/') + 1);
+      if (lastSegment.indexOf('.') === -1) {
+        request.uri = '/index.html';
+      }
+      return request;
+    }
+  EOT
+}
+
 resource "aws_cloudfront_distribution" "main" {
   enabled             = true
   comment             = "${local.name_prefix} - CoursePulse frontend and API"
@@ -66,9 +93,15 @@ resource "aws_cloudfront_distribution" "main" {
     cached_methods         = ["GET", "HEAD"]
     compress               = true
     cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.spa_rewrite.arn
+    }
   }
 
-  # API and health endpoints -> ALB, never cached.
+  # API and health endpoints -> ALB, never cached. No error rewriting here:
+  # API status codes (404, 401, 409, 422) must reach the client unchanged.
   dynamic "ordered_cache_behavior" {
     for_each = local.api_path_patterns
 
@@ -82,22 +115,6 @@ resource "aws_cloudfront_distribution" "main" {
       cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
       origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
     }
-  }
-
-  # SPA routing: S3 has no object for /courses/10 or /admin/reviews, so serve
-  # index.html and let React Router resolve the path.
-  custom_error_response {
-    error_code            = 403
-    response_code         = 200
-    response_page_path    = "/index.html"
-    error_caching_min_ttl = 10
-  }
-
-  custom_error_response {
-    error_code            = 404
-    response_code         = 200
-    response_page_path    = "/index.html"
-    error_caching_min_ttl = 10
   }
 
   restrictions {
