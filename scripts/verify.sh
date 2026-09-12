@@ -13,12 +13,20 @@ BASE_URL="${1:-$(tf_output application_url)}"
 BASE_URL="${BASE_URL%/}"
 info "Verifying $BASE_URL"
 
+# Retry transient network/TLS failures (curl exit 35 and friends) so a single
+# dropped connection to CloudFront does not fail a healthy deployment. Real
+# HTTP status codes are never retried away - they are compared below.
+CURL_OPTS=(-s --max-time 20 --retry 3 --retry-delay 2 --retry-all-errors)
+
 check_status() {
   local description="$1" path="$2" expected="$3"
   local actual
-  actual="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$BASE_URL$path")"
+  # `|| true` keeps `set -e` from exiting silently; curl reports 000 instead.
+  actual="$(curl "${CURL_OPTS[@]}" -o /dev/null -w '%{http_code}' "$BASE_URL$path" || true)"
   if [[ "$actual" == "$expected" ]]; then
     ok "$description ($path -> $actual)"
+  elif [[ "$actual" == "000" ]]; then
+    fail "$description: no response from $path (network or TLS error after retries)"
   else
     fail "$description: expected HTTP $expected from $path, got $actual"
   fi
@@ -33,7 +41,7 @@ check_status "admin is protected"     "/api/admin/stats"       401
 check_status "Swagger docs"           "/docs"                  200
 check_status "SPA route serves React" "/admin/reviews"         200
 
-COURSES="$(curl -s --max-time 20 "$BASE_URL/api/courses?page_size=1")"
+COURSES="$(curl "${CURL_OPTS[@]}" "$BASE_URL/api/courses?page_size=1" || true)"
 TOTAL="$(printf '%s' "$COURSES" | sed -n 's/.*"total":\([0-9]*\).*/\1/p')"
 if [[ -n "$TOTAL" && "$TOTAL" -gt 0 ]]; then
   ok "catalogue contains $TOTAL courses"
