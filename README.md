@@ -849,6 +849,17 @@ only for your repository.
    (Set `create_github_oidc_provider = false` if the account already has
    `token.actions.githubusercontent.com` registered - AWS allows only one.)
 
+   If your GitHub organisation uses **immutable OIDC subjects**, the deploy
+   fails with `Not authorized to perform sts:AssumeRoleWithWebIdentity`,
+   because GitHub sends `repo:owner@<id>/repo@<id>:...`. Copy the
+   `sub_claim_prefix` from
+   `gh api repos/OWNER/REPO/actions/oidc/customization/sub` into
+   `terraform.tfvars`:
+
+   ```hcl
+   github_oidc_subject_prefix = "repo:owner@123456/repo@789012"
+   ```
+
 2. `make infra-apply`, then take the role ARN:
 
    ```bash

@@ -170,6 +170,17 @@ variable "create_github_oidc_provider" {
   default     = true
 }
 
+variable "github_oidc_subject_prefix" {
+  description = <<-EOT
+    Exact OIDC subject prefix GitHub sends, for organisations that use
+    immutable subjects (e.g. "repo:owner@123/repo@456"). Leave empty to use
+    "repo:<github_repository>". Find it with:
+    gh api repos/OWNER/REPO/actions/oidc/customization/sub
+  EOT
+  type        = string
+  default     = ""
+}
+
 variable "app_log_level" {
   description = "LOG_LEVEL passed to the container."
   type        = string

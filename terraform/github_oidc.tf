@@ -58,11 +58,18 @@ data "aws_iam_policy_document" "github_assume_role" {
       values   = ["sts.amazonaws.com"]
     }
 
-    # Restricts the trust to this repository (any branch or tag).
+    # Restricts the trust to this repository (any branch, tag or environment).
+    # Organisations with immutable OIDC subjects send
+    # "repo:owner@<id>/repo@<id>:..." instead, so that exact prefix can be
+    # supplied through github_oidc_subject_prefix.
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repository}:*"]
+      values = [
+        var.github_oidc_subject_prefix != ""
+        ? "${var.github_oidc_subject_prefix}:*"
+        : "repo:${var.github_repository}:*"
+      ]
     }
   }
 }

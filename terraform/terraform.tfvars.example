@@ -12,6 +12,11 @@ environment = "dev"
 # Set to false if this AWS account already has a GitHub OIDC provider.
 # create_github_oidc_provider = true
 
+# Only if GitHub sends immutable OIDC subjects (the deploy fails with
+# "Not authorized to perform sts:AssumeRoleWithWebIdentity"). Copy the
+# sub_claim_prefix from: gh api repos/OWNER/REPO/actions/oidc/customization/sub
+# github_oidc_subject_prefix = "repo:your-org@123456/coursepulse@789012"
+
 # Deployed image tag. CI and scripts/deploy.sh pass the Git commit SHA.
 # container_image_tag = "latest"
 
