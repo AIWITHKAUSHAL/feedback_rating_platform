@@ -1,0 +1,145 @@
+/**
+ * CoursePulse design system.
+ *
+ * Tailwind CSS v4 is configured here (CSS-first): `@theme` defines the design
+ * tokens, which Tailwind turns into utilities such as `bg-brand-600`,
+ * `shadow-card` and `rounded-card`. A handful of component classes below keep
+ * repeated markup (buttons, inputs, cards) consistent and readable.
+ */
+@import "tailwindcss";
+
+@theme {
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    sans-serif;
+
+  /* Brand indigo - primary actions, links and focus rings. */
+  --color-brand-50: #eef2ff;
+  --color-brand-100: #e0e7ff;
+  --color-brand-200: #c7d2fe;
+  --color-brand-300: #a5b4fc;
+  --color-brand-400: #818cf8;
+  --color-brand-500: #6366f1;
+  --color-brand-600: #4f46e5;
+  --color-brand-700: #4338ca;
+  --color-brand-800: #3730a3;
+  --color-brand-900: #312e81;
+
+  /* Star / rating accent. */
+  --color-star-400: #fbbf24;
+  --color-star-500: #f59e0b;
+
+  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.04), 0 10px 30px -18px rgb(15 23 42 / 0.25);
+  --shadow-lift: 0 2px 4px rgb(15 23 42 / 0.06), 0 18px 40px -20px rgb(15 23 42 / 0.28);
+  --radius-card: 1rem;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-slate-50 text-slate-800 antialiased;
+    font-family: var(--font-sans);
+  }
+
+  /* A visible focus ring on every interactive element, for keyboard users. */
+  :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+    @apply outline-none ring-2 ring-brand-500 ring-offset-2 ring-offset-white;
+  }
+
+  /*
+   * Headings deliberately INHERIT their colour. An element rule here would
+   * beat the colour inherited from a dark section (the hero, the course
+   * detail banner), turning white headings dark. Set a colour with a utility
+   * class where a heading needs one.
+   */
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+}
+
+/* ------------------------------------------------------------- components */
+.card {
+  @apply rounded-card border border-slate-200/80 bg-white shadow-card;
+}
+
+/*
+ * `btn` and `badge` are declared with @utility (not as plain classes) because
+ * Tailwind v4 can only @apply real utilities - that is what lets the variants
+ * below compose on top of them.
+ */
+@utility btn {
+  @apply inline-flex select-none items-center justify-center gap-2 rounded-xl px-4 py-2.5
+    text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60;
+}
+
+.btn-primary {
+  @apply btn bg-brand-600 text-white hover:bg-brand-700 active:bg-brand-800;
+}
+
+.btn-secondary {
+  @apply btn border border-slate-300 bg-white text-slate-700 hover:border-slate-400 hover:bg-slate-50;
+}
+
+.btn-ghost {
+  @apply btn text-slate-600 hover:bg-slate-100 hover:text-slate-900;
+}
+
+.btn-danger {
+  @apply btn bg-rose-600 text-white hover:bg-rose-700;
+}
+
+.btn-sm {
+  @apply px-3 py-1.5 text-xs;
+}
+
+.field-label {
+  @apply mb-1.5 block text-sm font-medium text-slate-700;
+}
+
+.field-input {
+  @apply w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900
+    placeholder:text-slate-400 hover:border-slate-400;
+}
+
+.field-input-error {
+  @apply border-rose-400 bg-rose-50/40;
+}
+
+.field-error {
+  @apply mt-1.5 flex items-start gap-1.5 text-sm font-medium text-rose-700;
+}
+
+@utility badge {
+  @apply inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold;
+}
+
+.badge-brand {
+  @apply badge bg-brand-50 text-brand-700;
+}
+
+.badge-neutral {
+  @apply badge bg-slate-100 text-slate-600;
+}
+
+.badge-success {
+  @apply badge bg-emerald-50 text-emerald-700;
+}
+
+.badge-muted {
+  @apply badge bg-amber-50 text-amber-800;
+}
+
+.skeleton {
+  @apply animate-pulse rounded-lg bg-slate-200/80;
+}
+
+/* Screen-reader-only helper used for live regions and icon-only controls. */
+.sr-only-focusable:not(:focus) {
+  @apply sr-only;
+}

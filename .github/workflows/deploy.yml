@@ -1,0 +1,246 @@
+# Deployment to AWS.
+#
+# Authentication uses GitHub Actions OIDC: the workflow exchanges a short-lived
+# GitHub identity token for temporary AWS credentials. There are NO long-lived
+# AWS access keys stored in GitHub.
+#
+# One-time setup (see README "GitHub OIDC setup"):
+#   1. terraform apply with `github_repository = "owner/repo"`
+#   2. Repository secret:    AWS_DEPLOY_ROLE_ARN  (terraform output github_actions_role_arn)
+#   3. Repository variables: AWS_REGION, ECR_REPOSITORY_URL, ECS_CLUSTER_NAME,
+#                            ECS_SERVICE_NAME, ECS_TASK_DEFINITION_FAMILY,
+#                            ECS_TASK_SUBNETS, ECS_TASK_SECURITY_GROUP,
+#                            FRONTEND_BUCKET_NAME, CLOUDFRONT_DISTRIBUTION_ID,
+#                            APPLICATION_URL, CLOUDWATCH_LOG_GROUP
+#      (each one is a `terraform output` value)
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_seed:
+        description: "Run the idempotent seed after migrating"
+        type: boolean
+        default: false
+
+# Never run two deployments at once.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  id-token: write # required for OIDC
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "22"
+
+jobs:
+  # Deployment is gated on the same checks CI runs.
+  test:
+    name: Test before deploying
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: coursepulse
+          POSTGRES_PASSWORD: coursepulse
+          POSTGRES_DB: coursepulse_pytest
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U coursepulse"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Backend tests
+        working-directory: backend
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg://coursepulse:coursepulse@localhost:5432/coursepulse_pytest
+        run: |
+          pip install -r requirements-dev.txt
+          ruff check .
+          ruff format --check .
+          pytest
+
+      - name: Verify migrations match the models
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+psycopg://coursepulse:coursepulse@localhost:5432/coursepulse_pytest
+        run: |
+          alembic upgrade head
+          alembic check
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Frontend tests and build
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run lint
+          npm test
+          npm run build
+
+  deploy:
+    name: Deploy to AWS
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: coursepulse-deploy-${{ github.run_id }}
+
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # ------------------------------------------------------------ backend
+      - name: Build and push the backend image
+        env:
+          ECR_URL: ${{ vars.ECR_REPOSITORY_URL }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build --platform linux/amd64 \
+            -t "$ECR_URL:$IMAGE_TAG" -t "$ECR_URL:latest" backend
+          docker push --quiet "$ECR_URL:$IMAGE_TAG"
+          docker push --quiet "$ECR_URL:latest"
+          echo "Pushed $ECR_URL:$IMAGE_TAG"
+
+      - name: Register a new task definition revision
+        id: taskdef
+        env:
+          FAMILY: ${{ vars.ECS_TASK_DEFINITION_FAMILY }}
+          ECR_URL: ${{ vars.ECR_REPOSITORY_URL }}
+          IMAGE_TAG: ${{ github.sha }}
+        # Takes the current revision, swaps in the new image and registers it.
+        run: |
+          aws ecs describe-task-definition --task-definition "$FAMILY" \
+            --query taskDefinition > taskdef.json
+          jq --arg image "$ECR_URL:$IMAGE_TAG" '
+            .containerDefinitions[0].image = $image
+            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                  .compatibilities, .registeredAt, .registeredBy)
+          ' taskdef.json > new-taskdef.json
+          ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://new-taskdef.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "arn=$ARN" >> "$GITHUB_OUTPUT"
+          echo "Registered $ARN"
+
+      - name: Deploy to ECS and wait for stability
+        env:
+          CLUSTER: ${{ vars.ECS_CLUSTER_NAME }}
+          SERVICE: ${{ vars.ECS_SERVICE_NAME }}
+        run: |
+          aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" \
+            --task-definition "${{ steps.taskdef.outputs.arn }}" >/dev/null
+          aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
+          echo "ECS service is stable."
+
+      # ---------------------------------------------------------- database
+      # Forward-only Alembic migrations run as a one-off task inside the VPC
+      # (RDS has no public endpoint). Stored reviews are never dropped.
+      - name: Run database migrations
+        env:
+          ECS_CLUSTER_NAME: ${{ vars.ECS_CLUSTER_NAME }}
+          ECS_TASK_DEFINITION_FAMILY: ${{ vars.ECS_TASK_DEFINITION_FAMILY }}
+          ECS_TASK_SUBNETS: ${{ vars.ECS_TASK_SUBNETS }}
+          ECS_TASK_SECURITY_GROUP: ${{ vars.ECS_TASK_SECURITY_GROUP }}
+          CLOUDWATCH_LOG_GROUP: ${{ vars.CLOUDWATCH_LOG_GROUP }}
+        run: ./scripts/ecs_task.sh alembic upgrade head
+
+      - name: Seed demo data (optional)
+        if: inputs.run_seed
+        env:
+          ECS_CLUSTER_NAME: ${{ vars.ECS_CLUSTER_NAME }}
+          ECS_TASK_DEFINITION_FAMILY: ${{ vars.ECS_TASK_DEFINITION_FAMILY }}
+          ECS_TASK_SUBNETS: ${{ vars.ECS_TASK_SUBNETS }}
+          ECS_TASK_SECURITY_GROUP: ${{ vars.ECS_TASK_SECURITY_GROUP }}
+          CLOUDWATCH_LOG_GROUP: ${{ vars.CLOUDWATCH_LOG_GROUP }}
+        run: ./scripts/ecs_task.sh python -m app.scripts.seed
+
+      # ----------------------------------------------------------- frontend
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build the React application
+        working-directory: frontend
+        env:
+          # Empty: the SPA calls /api on its own CloudFront origin.
+          VITE_API_BASE_URL: ""
+        run: |
+          npm ci
+          npm run build
+
+      - name: Upload to S3
+        env:
+          BUCKET: ${{ vars.FRONTEND_BUCKET_NAME }}
+        # Hashed assets are immutable; index.html must never be cached.
+        run: |
+          aws s3 sync frontend/dist "s3://$BUCKET" --delete \
+            --exclude "index.html" \
+            --cache-control "public,max-age=31536000,immutable"
+          aws s3 cp frontend/dist/index.html "s3://$BUCKET/index.html" \
+            --cache-control "no-cache,no-store,must-revalidate"
+
+      - name: Invalidate the CloudFront cache
+        env:
+          DISTRIBUTION_ID: ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}
+        run: |
+          ID=$(aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" \
+            --paths "/*" --query 'Invalidation.Id' --output text)
+          aws cloudfront wait invalidation-completed \
+            --distribution-id "$DISTRIBUTION_ID" --id "$ID" || true
+
+      # ------------------------------------------------------------- verify
+      - name: Verify the deployment
+        env:
+          APPLICATION_URL: ${{ vars.APPLICATION_URL }}
+        run: ./scripts/verify.sh "$APPLICATION_URL"
+
+      - name: Deployment summary
+        if: always()
+        env:
+          APPLICATION_URL: ${{ vars.APPLICATION_URL }}
+        run: |
+          {
+            echo "## CoursePulse deployment"
+            echo
+            echo "| Item | Value |"
+            echo "| --- | --- |"
+            echo "| Application | ${APPLICATION_URL} |"
+            echo "| Swagger | ${APPLICATION_URL}/docs |"
+            echo "| Commit | \`${GITHUB_SHA}\` |"
+            echo "| Image tag | \`${GITHUB_SHA}\` |"
+            echo "| ECS service | ${{ vars.ECS_SERVICE_NAME }} |"
+          } >> "$GITHUB_STEP_SUMMARY"

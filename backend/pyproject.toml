@@ -1,0 +1,42 @@
+[project]
+name = "coursepulse-backend"
+version = "1.0.0"
+description = "CoursePulse - course feedback and rating platform API"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # import sorting
+    "B",    # bugbear
+    "C4",   # comprehensions
+    "UP",   # pyupgrade
+    "SIM",  # simplify
+    "RUF",  # ruff specific
+]
+ignore = [
+    "B008",  # FastAPI dependencies are function calls in argument defaults by design
+    "E501",  # long lines are reported by the formatter, not the linter
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests may use assert and long literal fixtures.
+"tests/**" = ["S101"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+filterwarnings = [
+    "error::DeprecationWarning:app.*",
+]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/scripts/seed_data.py", "alembic/*"]

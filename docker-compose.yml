@@ -1,0 +1,83 @@
+# Local development stack: PostgreSQL + FastAPI + React.
+#
+#   docker compose up --build
+#
+#   Frontend  http://localhost:5173
+#   Backend   http://localhost:8000
+#   Swagger   http://localhost:8000/docs
+#   Health    http://localhost:8000/health
+#
+# Secrets come from .env (copy .env.example). Nothing here is production
+# configuration - AWS deployment is described in terraform/ and scripts/.
+name: coursepulse
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: coursepulse-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-coursepulse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-coursepulse}
+      POSTGRES_DB: ${POSTGRES_DB:-coursepulse}
+    ports:
+      # Exposed so you can inspect the database with psql from the host.
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-coursepulse} -d ${POSTGRES_DB:-coursepulse}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    container_name: coursepulse-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-coursepulse}:${POSTGRES_PASSWORD:-coursepulse}@postgres:5432/${POSTGRES_DB:-coursepulse}
+      ENVIRONMENT: ${ENVIRONMENT:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      JWT_SECRET: ${JWT_SECRET:-local-development-only-change-me}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-60}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:4173}
+    ports:
+      - "8000:8000"
+    volumes:
+      # Source mount + --reload gives a fast local edit loop.
+      - ./backend/app:/app/app:ro
+      - ./backend/alembic:/app/alembic:ro
+    # Migrations run explicitly before the server starts. They are versioned and
+    # idempotent, so existing courses and reviews are never destroyed.
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+  frontend:
+    build:
+      context: ./frontend
+      target: development
+    container_name: coursepulse-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      # Relative /api requests are proxied to the backend container by Vite.
+      VITE_API_BASE_URL: ""
+      VITE_DEV_API_PROXY: http://backend:8000
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.ts:/app/vite.config.ts
+
+volumes:
+  postgres_data:
+    name: coursepulse_postgres_data

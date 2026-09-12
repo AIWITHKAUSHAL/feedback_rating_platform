@@ -1,0 +1,49 @@
+# ------------------------------------------------------------------- secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials
+
+# -------------------------------------------------------------------- python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# ---------------------------------------------------------------------- node
+node_modules/
+dist/
+coverage/
+.vite/
+*.tsbuildinfo
+npm-debug.log*
+
+# ----------------------------------------------------------------- terraform
+# State can contain database endpoints and generated secrets - never commit it.
+.terraform/
+# Commit .terraform.lock.hcl so local, CI and deployment runs use the same
+# reviewed provider versions.
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+crash.*.log
+terraform.tfvars
+*.auto.tfvars
+!terraform.tfvars.example
+
+# ------------------------------------------------------------------- tooling
+.DS_Store
+.idea/
+.vscode/
+*.swp
+build-info.json
